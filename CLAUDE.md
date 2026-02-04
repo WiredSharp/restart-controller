@@ -21,9 +21,9 @@ This solution will be developped in Python. Code will be located in the src fold
 
 We can identify the following components:
 
-- A kubernetes resource watcher to read various events and notify when an event match the provided filter
-- A Restart manager that handle pod restart. Restart loop must be prevented. Deployment annotations must indicate when and why restart is triggered.
-- A coordinator to require the restart manager to restart a pod by updating its deployment when resource watcher send a notification.
+- A kubernetes pod watcher to detect pod deletions and container restarts
+- A Restart manager that handles pod restart with cooldown-based loop prevention. Deployment annotations indicate when and why restart is triggered.
+- A coordinator to require the restart manager to restart a pod by updating its deployment when pod watcher sends a notification.
 
 Code should be organized in order to be able to test most of the code without requiring a specific infrastructure.
 
@@ -31,7 +31,7 @@ Avoid module level variables
 
 ### Tests
 
-helper script to setup a local k3s test cluster must be available.
+helper script to setup a local k3d test cluster must be available.
 
 linter should be run to enforce clean code even for a small project.
 
@@ -57,13 +57,15 @@ A `.venv` virtualenv is used. All Makefile targets use it automatically.
 - `src/restart_controller/__init__.py` — Package root, defines `ANNOTATION_PREFIX`.
 - `src/restart_controller/dependency_tree.py` — Pure dependency tree logic: builds parent→children map, computes transitive restart sets with deduplication. No K8s dependency.
 - `src/restart_controller/logging_config.py` — Logging setup: ISO 8601 formatter, stderr (INFO+), rotating file (DEBUG+).
-- `src/restart_controller/watcher.py` — Kubernetes event watch loops for deployments and pods, with RS→Deployment cache.
-- `src/restart_controller/restart_manager.py` — Patches deployment annotations to trigger restarts with wave-based loop prevention.
+- `src/restart_controller/watcher.py` — Base class for Kubernetes event watchers.
+- `src/restart_controller/pod_watcher.py` — Watches pods for deletions and container restarts, resolves owning deployment via ReplicaSet.
+- `src/restart_controller/restart_manager.py` — Patches deployment annotations to trigger restarts with 60s cooldown-based loop prevention.
 - `src/restart_controller/main.py` — Entry point and Controller coordinator.
 - `deploy/rbac.yaml` — ServiceAccount, ClusterRole, ClusterRoleBinding.
 - `deploy/deployment.yaml` — Controller deployment manifest.
 - `deploy/examples/chain.yaml` — Example db→api→frontend dependency chain.
-- `scripts/setup-k3s.sh` — Installs k3s, builds and imports controller image, applies manifests.
+- `scripts/setup-k3d.sh` — Creates k3d cluster, builds and imports controller image, applies manifests.
+- `scripts/cleanup-k3d.sh` — Deletes the k3d cluster.
 - `scripts/test-e2e.sh` — End-to-end test: triggers restart, verifies cascade and deduplication.
 
 Dependencies are declared via annotations: `restart-controller/parent: <parent-deployment-name>` on each child deployment.
