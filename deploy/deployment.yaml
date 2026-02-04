@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restart-controller
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: restart-controller
+  template:
+    metadata:
+      labels:
+        app: restart-controller
+    spec:
+      serviceAccountName: restart-controller
+      containers:
+        - name: controller
+          image: restart-controller:latest
+          imagePullPolicy: IfNotPresent

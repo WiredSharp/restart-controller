@@ -1,13 +1,13 @@
 """Restart manager: triggers deployment restarts via annotation patches.
 
-Patches deployment annotations to force a rollout restart, using a wave ID
-to allow the watcher to distinguish controller-initiated changes from
-external ones and prevent restart loops.
+Patches deployment annotations to force a rollout restart, using a cooldown
+to prevent restart loops.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 
 from kubernetes import client
@@ -17,8 +17,9 @@ import restart_controller
 
 class RestartManager:
     ANNOTATION_LAST_RESTART = f"{restart_controller.ANNOTATION_PREFIX}last-restart"
-    ANNOTATION_WAVE = f"{restart_controller.ANNOTATION_PREFIX}wave"
     ANNOTATION_REASON = f"{restart_controller.ANNOTATION_PREFIX}restart-reason"
+
+    COOLDOWN = 60.0
 
     """Triggers deployment restarts by patching annotations."""
 
@@ -26,26 +27,39 @@ class RestartManager:
         self._logger = logging.getLogger(type(self).__name__)
         self._namespace = namespace
         self._apps_api = apps_api or client.AppsV1Api()
+        self._last_restart: dict[str, float] = {}
 
-    def restart(self, deployment_name: str, wave_id: str, reason: str) -> None:
+    def restart(self, deployment_name: str, reason: str) -> bool:
         """Trigger a rollout restart for a deployment.
 
         Sets restart-controller annotations on the pod template to force
-        Kubernetes to roll out new pods.
+        Kubernetes to roll out new pods. Skips if the deployment was recently
+        restarted (within COOLDOWN seconds).
 
         Args:
             deployment_name: Name of the deployment to restart.
-            wave_id: Unique ID for this restart wave (used to prevent loops).
             reason: Human-readable reason for the restart.
+
+        Returns:
+            True if restart was triggered, False if skipped due to cooldown.
         """
-        now = datetime.now(timezone.utc).isoformat()
+        now = time.monotonic()
+        last = self._last_restart.get(deployment_name, 0.0)
+        if now - last < self.COOLDOWN:
+            self._logger.debug(
+                "Skipping restart of %s (restarted %.1fs ago)",
+                deployment_name,
+                now - last,
+            )
+            return False
+
+        timestamp = datetime.now(timezone.utc).isoformat()
         patch = {
             "spec": {
                 "template": {
                     "metadata": {
                         "annotations": {
-                            RestartManager.ANNOTATION_LAST_RESTART: now,
-                            RestartManager.ANNOTATION_WAVE: wave_id,
+                            RestartManager.ANNOTATION_LAST_RESTART: timestamp,
                             RestartManager.ANNOTATION_REASON: reason,
                         }
                     }
@@ -55,16 +69,13 @@ class RestartManager:
 
         try:
             self._apps_api.patch_namespaced_deployment(deployment_name, self._namespace, patch)
+            self._last_restart[deployment_name] = now
             self._logger.info(
-                "Restarted deployment %s (wave=%s, reason=%s)",
+                "Restarted deployment %s (reason=%s)",
                 deployment_name,
-                wave_id,
                 reason,
             )
+            return True
         except client.ApiException as e:
             self._logger.error("Failed to restart deployment %s: %s", deployment_name, e)
-
-    @staticmethod
-    def generate_wave_id() -> str:
-        """Generate a unique wave ID based on the current timestamp."""
-        return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+            return False

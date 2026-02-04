@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 from restart_controller.dependency_tree import DependencyTree
 from restart_controller.main import Controller
-from restart_controller.restart_manager import RestartManager
 from restart_controller.watcher import Watcher
 
 NAMESPACE = "test-ns"
@@ -114,17 +113,3 @@ class TestOnChange:
         ctrl._on_change(DB)
 
         assert ctrl._restart_mgr._apps_api.patch_namespaced_deployment.call_count == 2
-
-    def test_all_restarts_share_same_wave(self):
-        tree = DependencyTree()
-        tree.add(DB, [API, WORKER])
-        ctrl = self._make_controller_with_tree(tree)
-
-        ctrl._on_change(DB)
-
-        calls = ctrl._restart_mgr._apps_api.patch_namespaced_deployment.call_args_list
-        wave_ids = set()
-        for call in calls:
-            annotations = call[0][2]["spec"]["template"]["metadata"]["annotations"]
-            wave_ids.add(annotations[RestartManager.ANNOTATION_WAVE])
-        assert len(wave_ids) == 1

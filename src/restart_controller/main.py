@@ -15,6 +15,7 @@ from kubernetes import client, config
 
 from .dependency_tree import DependencyTree
 from .logging_config import setup_logging
+from .pod_watcher import PodWatcher
 from .restart_manager import RestartManager
 from .watcher import Watcher
 
@@ -29,7 +30,7 @@ class Controller:
         self._namespace = namespace
         self._apps_api = apps_api
         self._restart_mgr = RestartManager(namespace, apps_api)
-        self._watcher = Watcher(namespace, self._on_change, apps_api=apps_api, core_api=core_api)
+        self._pod_watcher = PodWatcher(namespace, self._on_change, apps_api=apps_api, core_api=core_api)
 
     def build_tree(self) -> DependencyTree:
         """Build the dependency tree by reading annotations from all deployments."""
@@ -59,14 +60,13 @@ class Controller:
             self._logger.info("No children to restart for %s", deployment_name)
             return
 
-        wave_id = RestartManager.generate_wave_id()
         reason = f"parent {deployment_name} changed"
-        self._logger.info("Restarting %d deployments (wave %s): %s", len(restart_set), wave_id, restart_set)
+        self._logger.info("Restarting %d deployments: %s", len(restart_set), restart_set)
         for dep in restart_set:
-            self._restart_mgr.restart(dep, wave_id, reason)
+            self._restart_mgr.restart(dep, reason)
 
     def run(self) -> None:
-        """Start watcher threads and wait for shutdown signal."""
+        """Start watcher thread and wait for shutdown signal."""
         stop = threading.Event()
 
         def shutdown(signum: int, frame: object) -> None:
@@ -76,20 +76,14 @@ class Controller:
         signal.signal(signal.SIGTERM, shutdown)
         signal.signal(signal.SIGINT, shutdown)
 
-        dep_thread = threading.Thread(
-            target=self._watcher.watch_deployments,
-            daemon=True,
-            name="deployment-watcher",
-        )
         pod_thread = threading.Thread(
-            target=self._watcher.watch_pods,
+            target=self._pod_watcher.watch,
             daemon=True,
             name="pod-watcher",
         )
 
-        dep_thread.start()
         pod_thread.start()
-        self._logger.info("Watchers started")
+        self._logger.info("Pod watcher started")
 
         stop.wait()
         self._logger.info("Controller stopped")

@@ -54,10 +54,16 @@ A `.venv` virtualenv is used. All Makefile targets use it automatically.
 
 ## Architecture
 
-- `src/tree.py` — Pure dependency tree logic: builds parent→children map, computes transitive restart sets with deduplication. No K8s dependency.
-- `src/logging_config.py` — Logging setup: ISO 8601 formatter, stderr (INFO+), rotating file (DEBUG+).
-- `src/watcher.py` — Kubernetes event watch loops for deployments and pods (planned).
-- `src/restart_manager.py` — Patches deployment annotations to trigger restarts (planned).
-- `src/main.py` — Entry point and coordinator (planned).
+- `src/restart_controller/__init__.py` — Package root, defines `ANNOTATION_PREFIX`.
+- `src/restart_controller/dependency_tree.py` — Pure dependency tree logic: builds parent→children map, computes transitive restart sets with deduplication. No K8s dependency.
+- `src/restart_controller/logging_config.py` — Logging setup: ISO 8601 formatter, stderr (INFO+), rotating file (DEBUG+).
+- `src/restart_controller/watcher.py` — Kubernetes event watch loops for deployments and pods, with RS→Deployment cache.
+- `src/restart_controller/restart_manager.py` — Patches deployment annotations to trigger restarts with wave-based loop prevention.
+- `src/restart_controller/main.py` — Entry point and Controller coordinator.
+- `deploy/rbac.yaml` — ServiceAccount, ClusterRole, ClusterRoleBinding.
+- `deploy/deployment.yaml` — Controller deployment manifest.
+- `deploy/examples/chain.yaml` — Example db→api→frontend dependency chain.
+- `scripts/setup-k3s.sh` — Installs k3s, builds and imports controller image, applies manifests.
+- `scripts/test-e2e.sh` — End-to-end test: triggers restart, verifies cascade and deduplication.
 
 Dependencies are declared via annotations: `restart-controller/parent: <parent-deployment-name>` on each child deployment.
